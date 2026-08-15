@@ -255,7 +255,7 @@ async function pickInOverlay(
       );
       return comp;
     },
-    { overlay: true, overlayOptions: { anchor: "top-right", width: "44%", margin: 1 } },
+    { overlay: true, overlayOptions: { anchor: "center", width: "44%", margin: 1 } },
   );
 }
 
