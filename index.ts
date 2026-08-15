@@ -1,8 +1,8 @@
 import type { ExtensionAPI, ReadonlyFooterDataProvider, Theme } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join, dirname } from "node:path";
 
 import type { ColorScheme, CodexUsageSummary, SegmentContext, StatusLinePreset, StatusLineSegmentId } from "./types.js";
 import { getPreset, PRESETS } from "./presets.js";
@@ -31,27 +31,63 @@ function getProviderFromModelId(modelId: string | undefined): UsageProvider {
 
 interface PowerlineConfig {
   preset: StatusLinePreset;
+  disabledSegments: StatusLineSegmentId[];
   customSegments?: StatusLineSegmentId[];
 }
 
 let config: PowerlineConfig = {
   preset: "default",
+  disabledSegments: [],
 };
 
 // Canonical order of every selectable segment.
 const ALL_SEGMENTS: StatusLineSegmentId[] = [
   "pi", "model", "thinking", "path", "git", "subagents", "extension_statuses",
   "context_pct", "context_total", "token_in", "token_out", "token_total",
-  "cache_read", "cache_write", "usage_status", "token_rate", "tps_live",
+  "cache_read", "cache_write", "usage_status", "token_rate",
   "time_spent", "time", "session", "hostname",
 ];
 
+// Human labels for the segment picker.
+const SEGMENT_LABELS: Record<StatusLineSegmentId, string> = {
+  pi: "Pi logo",
+  model: "Model",
+  thinking: "Thinking level",
+  path: "Folder",
+  git: "Git",
+  subagents: "Subagents",
+  extension_statuses: "Extension status",
+  context_pct: "Context used",
+  context_total: "Context total",
+  token_in: "Tokens in",
+  token_out: "Tokens out",
+  token_total: "Tokens total",
+  cache_read: "Cache read",
+  cache_write: "Cache write",
+  usage_status: "Usage",
+  token_rate: "Speed",
+  time_spent: "Elapsed time",
+  time: "Clock",
+  session: "Session ID",
+  hostname: "Machine",
+};
+
+// Grouping for the picker (headers).
+const SEGMENT_GROUPS: { title: string; ids: StatusLineSegmentId[] }[] = [
+  { title: "Identity", ids: ["pi", "model", "path", "session", "hostname"] },
+  { title: "Activity", ids: ["thinking", "git", "subagents", "extension_statuses"] },
+  { title: "Context", ids: ["context_pct", "context_total"] },
+  { title: "Tokens", ids: ["token_in", "token_out", "token_total", "cache_read", "cache_write"] },
+  { title: "Usage & speed", ids: ["usage_status", "token_rate", "time_spent", "time"] },
+];
+
 // Single source of truth: the ordered list to render.
-// A custom edit overrides the current preset's list.
+// A custom list overrides; otherwise the preset minus disabled segments.
 function getEffectiveSegments(): StatusLineSegmentId[] {
   if (config.customSegments) return config.customSegments;
   const def = getPreset(config.preset);
-  return [...def.leftSegments, ...def.rightSegments, ...(def.secondarySegments ?? [])];
+  const base = [...def.leftSegments, ...def.rightSegments, ...(def.secondarySegments ?? [])];
+  return base.filter((s) => !config.disabledSegments.includes(s));
 }
 
 // Check if quietStartup is enabled in settings
@@ -67,6 +103,70 @@ function isQuietStartup(): boolean {
   } catch {}
   
   return false;
+}
+
+// ─── Persistence (settings.json → powerline key) ────────────────────────────
+function getSettingsPath(): string {
+  const homeDir = process.env.HOME || process.env.USERPROFILE || "";
+  const agentDir = process.env.PI_CODING_AGENT_DIR?.trim() || join(homeDir, ".pi", "agent");
+  return join(agentDir, "settings.json");
+}
+
+function readPersistedPowerline(): Partial<PowerlineConfig> | null {
+  const settingsPath = getSettingsPath();
+  try {
+    if (!existsSync(settingsPath)) return null;
+    const settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+    const pw = settings?.powerline;
+    if (!pw || typeof pw !== "object" || Array.isArray(pw)) return null;
+
+    const out: Partial<PowerlineConfig> = {};
+    const presetVal = pw.preset;
+    if (typeof presetVal === "string" && (Object.keys(PRESETS) as string[]).includes(presetVal)) {
+      out.preset = presetVal as StatusLinePreset;
+    }
+    if (Array.isArray(pw.disabledSegments)) {
+      out.disabledSegments = pw.disabledSegments.filter(
+        (s): s is StatusLineSegmentId => typeof s === "string" && ALL_SEGMENTS.includes(s as StatusLineSegmentId)
+      );
+    }
+    if (Array.isArray(pw.customSegments) && pw.customSegments.length > 0) {
+      const segs = pw.customSegments.filter(
+        (s): s is StatusLineSegmentId => typeof s === "string" && ALL_SEGMENTS.includes(s as StatusLineSegmentId)
+      );
+      if (segs.length > 0) out.customSegments = segs;
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+function persistPowerlineConfig(): boolean {
+  const settingsPath = getSettingsPath();
+  let settings: Record<string, unknown> = {};
+  try {
+    if (existsSync(settingsPath)) {
+      const parsed = JSON.parse(readFileSync(settingsPath, "utf-8"));
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        settings = parsed as Record<string, unknown>;
+      }
+    }
+  } catch {
+    return false;
+  }
+  settings.powerline = {
+    preset: config.preset,
+    disabledSegments: config.disabledSegments,
+    customSegments: config.customSegments,
+  };
+  try {
+    mkdirSync(dirname(settingsPath), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -161,6 +261,12 @@ function computeResponsiveLayout(
 // ═══════════════════════════════════════════════════════════════════════════
 
 export default function powerlineFooter(pi: ExtensionAPI) {
+  // Restore persisted config (settings.json → powerline) before first render.
+  const persisted = readPersistedPowerline();
+  if (persisted) {
+    config = { ...config, ...persisted };
+  }
+
   let enabled = true;
   let sessionStartTime = Date.now();
   let currentCtx: any = null;
@@ -360,31 +466,58 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     if (!(name in PRESETS)) return;
     config.preset = name;
     config.customSegments = undefined;
+    config.disabledSegments = [];
     lastLayoutResult = null;
     if (enabled) setupCustomEditor(ctx);
+    persistPowerlineConfig();
     ctx.ui.notify(`Preset: ${name}`, "info");
   }
 
-  // Toggle individual segments. Saves to the custom ordered list.
+  // Toggle individual segments. Saves to blacklist or custom list, then persists.
   async function editSegments(ctx: any) {
     const selected = new Set<StatusLineSegmentId>(getEffectiveSegments());
     while (true) {
-      const items = ALL_SEGMENTS.map((s) => `${selected.has(s) ? "✓" : "✗"} ${s}`);
-      items.push("Done — save and apply");
-      const choice = await ctx.ui.select("Toggle segments", items);
+      const labels: string[] = [];
+      const ids: (StatusLineSegmentId | null)[] = [];
+      for (const group of SEGMENT_GROUPS) {
+        labels.push(`── ${group.title} ──`);
+        ids.push(null);
+        for (const s of group.ids) {
+          labels.push(`${selected.has(s) ? "✓" : "✗"} ${SEGMENT_LABELS[s]}`);
+          ids.push(s);
+        }
+      }
+      labels.push("Done — save and apply");
+      ids.push(null);
+
+      const choice = await ctx.ui.select("Toggle segments", labels);
       if (!choice || choice.startsWith("Done")) break;
-      const seg = (choice.split(" ")[1] ?? "") as StatusLineSegmentId;
-      if (!ALL_SEGMENTS.includes(seg)) continue;
+      const idx = labels.indexOf(choice);
+      const seg = ids[idx];
+      if (!seg) continue;
       if (selected.has(seg)) selected.delete(seg); else selected.add(seg);
     }
+
     const ordered = ALL_SEGMENTS.filter((s) => selected.has(s));
     if (ordered.length === 0) {
       ctx.ui.notify("No segments selected — footer unchanged", "error");
       return;
     }
-    config.customSegments = ordered;
+
+    const def = getPreset(config.preset);
+    const presetList = [...def.leftSegments, ...def.rightSegments, ...(def.secondarySegments ?? [])];
+    const addedBeyondPreset = ordered.some((s) => !presetList.includes(s));
+    if (addedBeyondPreset) {
+      config.customSegments = ordered;
+      config.disabledSegments = [];
+    } else {
+      config.disabledSegments = presetList.filter((s) => !selected.has(s));
+      config.customSegments = undefined;
+    }
+
     lastLayoutResult = null;
     if (enabled) setupCustomEditor(ctx);
+    persistPowerlineConfig();
     ctx.ui.notify(`Footer updated (${ordered.length} segments)`, "info");
   }
 

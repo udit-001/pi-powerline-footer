@@ -44,10 +44,7 @@ export type StatusLineSegmentId =
   | "cache_write"
   | "thinking"
   | "extension_statuses"
-  | "token_rate"
-  | "tps_live"
-  | "tps_avg"
-  | "ttft";
+  | "token_rate";
 
 // Separator styles
 export type StatusLineSeparatorStyle =

@@ -60,7 +60,7 @@ export const PRESETS: Record<StatusLinePreset, PresetDef> = {
   },
 
   full: {
-    leftSegments: ["pi", "hostname", "model", "thinking", "path", "git", "subagents"],
+    leftSegments: ["pi", "hostname", "model", "thinking", "path", "git", "subagents", "session"],
     rightSegments: ["token_in", "token_out", "cache_read", "token_rate", "usage_status", "context_pct", "time_spent", "time", "extension_statuses"],
     separator: "powerline",
     colors: DEFAULT_COLORS,

@@ -482,49 +482,6 @@ const tokenRateSegment: StatusLineSegment = {
   },
 };
 
-// Live tokens/sec only.
-const tpsLiveSegment: StatusLineSegment = {
-  id: "tps_live",
-  render(ctx) {
-    const icons = getIcons();
-    const { liveTps, isStreaming, generationCount } = ctx.tokenRate;
-    if (!isStreaming && generationCount === 0) return { content: "", visible: false };
-    const semantic: SemanticColor = isStreaming ? "tokens" : "context";
-    return {
-      content: color(ctx, semantic, withIcon(icons.tokens, `${formatRate(liveTps)}`)),
-      visible: true,
-    };
-  },
-};
-
-// Session-average tokens/sec.
-const tpsAvgSegment: StatusLineSegment = {
-  id: "tps_avg",
-  render(ctx) {
-    const icons = getIcons();
-    const { avgTps, generationCount } = ctx.tokenRate;
-    if (avgTps <= 0 || generationCount === 0) return { content: "", visible: false };
-    return {
-      content: color(ctx, "context", withIcon(icons.tokens, `avg ${formatRate(avgTps)}`)),
-      visible: true,
-    };
-  },
-};
-
-// Session-average time-to-first-token.
-const ttftSegment: StatusLineSegment = {
-  id: "ttft",
-  render(ctx) {
-    const icons = getIcons();
-    const { avgTtftMs, generationCount } = ctx.tokenRate;
-    if (avgTtftMs <= 0 || generationCount === 0) return { content: "", visible: false };
-    return {
-      content: color(ctx, "context", withIcon(icons.time, `ttft ${formatTtft(avgTtftMs)}`)),
-      visible: true,
-    };
-  },
-};
-
 export const SEGMENTS: Record<StatusLineSegmentId, StatusLineSegment> = {
   pi: piSegment,
   model: modelSegment,
@@ -546,9 +503,6 @@ export const SEGMENTS: Record<StatusLineSegmentId, StatusLineSegment> = {
   cache_write: cacheWriteSegment,
   extension_statuses: extensionStatusesSegment,
   token_rate: tokenRateSegment,
-  tps_live: tpsLiveSegment,
-  tps_avg: tpsAvgSegment,
-  ttft: ttftSegment,
 };
 
 export function renderSegment(id: StatusLineSegmentId, ctx: SegmentContext): RenderedSegment {
