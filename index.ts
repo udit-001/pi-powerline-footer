@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ReadonlyFooterDataProvider, Theme } from "@earendil-works/pi-coding-agent";
 import { DynamicBorder } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { visibleWidth, Container, Text, Spacer, getKeybindings } from "@earendil-works/pi-tui";
+import { visibleWidth, Container, Text, Spacer, getKeybindings, matchesKey } from "@earendil-works/pi-tui";
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 
@@ -324,10 +324,10 @@ class SegmentsPickerComponent extends Container {
       this.cursor = this.cursor === ids.length - 1 ? 0 : this.cursor + 1;
       this.updateList();
       this.requestRender();
-    } else if (kb.matches(keyData, "tui.input.tab") || keyData === "\t" || keyData === "right") {
+    } else if (kb.matches(keyData, "tui.input.tab") || matchesKey(keyData, "tab") || matchesKey(keyData, "right")) {
       this.switchTab(1);
       this.requestRender();
-    } else if (keyData === "shift+tab" || keyData === "\x1b[Z" || keyData === "left") {
+    } else if (matchesKey(keyData, "shift+tab") || matchesKey(keyData, "left")) {
       this.switchTab(-1);
       this.requestRender();
     } else if (keyData === " ") {
