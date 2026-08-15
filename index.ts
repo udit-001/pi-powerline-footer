@@ -424,7 +424,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
   // Pick a preset (a named template). Shows each preset's segments first.
   async function pickPreset(ctx: any) {
     const items = Object.entries(PRESETS).map(([name, def]) => {
-      const segs = [...def.leftSegments, ...def.rightSegments, ...(def.secondarySegments ?? [])].join(" · ");
+      const segs = [...def.leftSegments, ...def.rightSegments, ...(def.secondarySegments ?? [])].map((s) => SEGMENT_LABELS[s]).join(" · ");
       return `${name}  →  ${segs}`;
     });
     const choice = await ctx.ui.select("Pick a preset", items);
