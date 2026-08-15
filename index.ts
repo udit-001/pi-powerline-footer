@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ReadonlyFooterDataProvider, Theme } from "@earendil-works/pi-coding-agent";
+import { getSelectListTheme } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { visibleWidth, SelectList, type SelectItem } from "@earendil-works/pi-tui";
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -440,7 +441,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     ctx.ui.notify(`Preset: ${name}`, "info");
   }
 
-  // Pick a color theme with live preview (overlay that leaves the status line visible).
+  // Pick a color theme with live preview (floating overlay; status line stays visible).
   async function pickTheme(ctx: any) {
     const previous = config.theme;
     const names = Object.keys(THEMES) as ThemeName[];
@@ -451,14 +452,12 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     }));
 
     await ctx.ui.custom<void>(
-      (_tui: any, theme: Theme, _keybindings: any, done: any) => {
-        const list = new SelectList(items, 6, {
-          selectedPrefix: (s: string) => s,
-          selectedText: (s: string) => theme.fg("accent", s),
-          description: (s: string) => theme.fg("muted", s),
-          scrollInfo: (s: string) => theme.fg("muted", s),
-          noMatch: (s: string) => s,
-        });
+      (tui, theme: Theme, _keybindings, done: any) => {
+        const list = new SelectList(
+          items,
+          Math.min(items.length, 10),
+          getSelectListTheme()
+        );
 
         // Start the highlight on the current theme.
         list.setSelectedIndex(Math.max(0, names.indexOf(previous)));
@@ -466,7 +465,6 @@ export default function powerlineFooter(pi: ExtensionAPI) {
         list.onSelectionChange = (item) => {
           config.theme = item.value as ThemeName;
           lastLayoutResult = null;
-          tuiRef?.requestRender();
         };
 
         list.onSelect = (item) => {
@@ -474,17 +472,30 @@ export default function powerlineFooter(pi: ExtensionAPI) {
           lastLayoutResult = null;
           persistPowerlineConfig();
           ctx.ui.notify(`Theme: ${THEME_LABELS[item.value as ThemeName]}`, "info");
+          tui.requestRender();
           done();
         };
 
         list.onCancel = () => {
           config.theme = previous;
           lastLayoutResult = null;
-          tuiRef?.requestRender();
+          tui.requestRender();
           done();
         };
 
-        return list;
+        return {
+          render: (width: number) => [
+            theme.fg("accent", "Pick a theme"),
+            theme.fg("muted", "─".repeat(Math.max(0, width))),
+            ...list.render(width),
+            theme.fg("muted", "─".repeat(Math.max(0, width))),
+          ],
+          invalidate: () => list.invalidate(),
+          handleInput: (data: string) => {
+            list.handleInput(data);
+            tui.requestRender();
+          },
+        };
       },
       {
         overlay: true,
