@@ -527,13 +527,9 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     const prevDisabled = config.disabledSegments;
 
     const names = Object.keys(PRESETS) as StatusLinePreset[];
-    const items = names.map((n) => {
-      const def = PRESETS[n];
-      const hint = [...def.leftSegments, ...def.rightSegments, ...(def.secondarySegments ?? [])]
-        .map((s) => SEGMENT_LABELS[s])
-        .join(" · ");
-      return { value: n, label: n, hint };
-    });
+    // Live preview already shows the segments in the footer, so the list
+    // just names each preset instead of repeating its segment details.
+    const items = names.map((n) => ({ value: n, label: n, hint: "" }));
 
     await pickInOverlay(ctx, {
       title: "Pick a preset",
