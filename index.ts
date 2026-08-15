@@ -231,15 +231,16 @@ class PickerComponent extends Container {
   }
 }
 
-// A checkbox-style panel for toggling segments on/off with live preview.
-// Operates on the caller's Set by reference so the footer re-render reads
-// the same state. Enforces "at least one segment on".
+// A tabbed checkbox panel for toggling segments on/off with live preview.
+// One tab per SEGMENT_GROUPS bucket. Operates on the caller's Set by
+// reference so the footer re-render reads the same state. Enforces
+// "at least one segment on".
 class SegmentsPickerComponent extends Container {
   private theme: Theme;
   private listContainer = new Container();
   private selected: Set<StatusLineSegmentId>;
-  private segIds: StatusLineSegmentId[] = [];
-  private cursor = 0; // index into segIds (segment rows only, headers skipped)
+  private activeTab = 0;
+  private cursor = 0; // index within the active tab's segment list
   private requestRender: () => void;
   private onToggle: (id: StatusLineSegmentId, nowOn: boolean) => void;
   private onDone: () => void;
@@ -262,55 +263,75 @@ class SegmentsPickerComponent extends Container {
     this.onDone = onDone;
     this.onCancel = onCancel;
 
-    for (const group of SEGMENT_GROUPS) {
-      for (const id of group.ids) this.segIds.push(id);
-    }
-
     this.addChild(new DynamicBorder());
     this.addChild(new Spacer(1));
     this.addChild(new Text(theme.fg("accent", title), 1, 0));
     this.addChild(new Spacer(1));
     this.addChild(this.listContainer);
     this.addChild(new Spacer(1));
-    this.addChild(new Text(theme.fg("muted", "↑↓ navigate  ·  space toggle  ·  enter done  ·  esc cancel"), 1, 0));
+    this.addChild(new Text(theme.fg("muted", "tab/←→ group  ·  ↑↓ pick  ·  space toggle  ·  enter done  ·  esc cancel"), 1, 0));
     this.addChild(new Spacer(1));
     this.addChild(new DynamicBorder());
     this.updateList();
   }
 
+  private currentIds(): StatusLineSegmentId[] {
+    return SEGMENT_GROUPS[this.activeTab].ids;
+  }
+
+  private switchTab(delta: number) {
+    const n = SEGMENT_GROUPS.length;
+    this.activeTab = (this.activeTab + delta + n) % n;
+    this.cursor = 0;
+    this.updateList();
+  }
+
   private updateList() {
     this.listContainer.clear();
-    let segPos = 0;
-    for (const group of SEGMENT_GROUPS) {
-      this.listContainer.addChild(new Text(this.theme.fg("muted", "── " + group.title + " ──"), 1, 0));
-      for (const id of group.ids) {
-        const isCur = segPos === this.cursor;
-        const on = this.selected.has(id);
-        const label = isCur
-          ? this.theme.fg("accent", SEGMENT_LABELS[id])
-          : this.theme.fg("text", SEGMENT_LABELS[id]);
-        const mark = on
-          ? this.theme.fg("accent", "[✓]")
-          : this.theme.fg("muted", "[ ]");
-        const prefix = isCur ? this.theme.fg("accent", "→ ") : "  ";
-        this.listContainer.addChild(new Text(prefix + label + "  " + mark, 1, 0));
-        segPos++;
-      }
-    }
+
+    // Tab bar — every group name stays visible; the active one is bracketed.
+    const bar = SEGMENT_GROUPS.map((g, i) =>
+      i === this.activeTab
+        ? this.theme.fg("accent", "[" + g.title + "]")
+        : this.theme.fg("muted", g.title)
+    ).join("  ");
+    this.listContainer.addChild(new Text(bar, 1, 0));
+    this.listContainer.addChild(new Spacer(1));
+
+    this.currentIds().forEach((id, pos) => {
+      const isCur = pos === this.cursor;
+      const on = this.selected.has(id);
+      const label = isCur
+        ? this.theme.fg("accent", SEGMENT_LABELS[id])
+        : this.theme.fg("text", SEGMENT_LABELS[id]);
+      const mark = on
+        ? this.theme.fg("accent", "[✓]")
+        : this.theme.fg("muted", "[ ]");
+      const prefix = isCur ? this.theme.fg("accent", "→ ") : "  ";
+      this.listContainer.addChild(new Text(prefix + label + "  " + mark, 1, 0));
+    });
   }
 
   handleInput(keyData: string) {
     const kb = getKeybindings();
+    const ids = this.currentIds();
+
     if (kb.matches(keyData, "tui.select.up") || keyData === "k") {
-      this.cursor = this.cursor === 0 ? this.segIds.length - 1 : this.cursor - 1;
+      this.cursor = this.cursor === 0 ? ids.length - 1 : this.cursor - 1;
       this.updateList();
       this.requestRender();
     } else if (kb.matches(keyData, "tui.select.down") || keyData === "j") {
-      this.cursor = this.cursor === this.segIds.length - 1 ? 0 : this.cursor + 1;
+      this.cursor = this.cursor === ids.length - 1 ? 0 : this.cursor + 1;
       this.updateList();
       this.requestRender();
+    } else if (kb.matches(keyData, "tui.input.tab") || keyData === "\t" || keyData === "right") {
+      this.switchTab(1);
+      this.requestRender();
+    } else if (keyData === "shift+tab" || keyData === "\x1b[Z" || keyData === "left") {
+      this.switchTab(-1);
+      this.requestRender();
     } else if (keyData === " ") {
-      const id = this.segIds[this.cursor];
+      const id = ids[this.cursor];
       if (!id) return;
       const on = this.selected.has(id);
       if (on) {
@@ -740,7 +761,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
             done();
           },
         ),
-      { overlay: true, overlayOptions: { anchor: "center", width: "44%", margin: 1 } },
+      { overlay: true, overlayOptions: { anchor: "center", width: "60%", margin: 1 } },
     );
   }
 
