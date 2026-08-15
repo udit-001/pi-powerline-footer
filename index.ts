@@ -9,7 +9,7 @@ import { getPreset, PRESETS } from "./presets.js";
 import { getSeparator } from "./separators.js";
 import { renderSegment } from "./segments.js";
 import { getGitStatus, invalidateGitStatus, invalidateGitBranch } from "./git-status.js";
-import { ansi, getFgAnsiCode } from "./colors.js";
+import { ansi, SEP } from "./colors.js";
 import { getDefaultColors } from "./theme.js";
 import { fetchCodexUsageSummary, fetchZaiUsageSummary } from "./usage-monitor.js";
 import { TokenRateTracker } from "./token-rate-monitor.js";
@@ -176,7 +176,7 @@ function buildContentFromParts(
 ): string {
   if (parts.length === 0) return "";
   const separatorDef = getSeparator(presetDef.separator);
-  const sepAnsi = getFgAnsiCode("sep");
+  const sepAnsi = SEP;
   const sep = separatorDef.left;
   return " " + parts.join(` ${sepAnsi}${sep}${ansi.reset} `) + ansi.reset + " ";
 }
@@ -653,7 +653,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
             return originalRender(width);
           }
           
-          const bc = (s: string) => `${getFgAnsiCode("sep")}${s}${ansi.reset}`;
+          const bc = (s: string) => `${SEP}${s}${ansi.reset}`;
           const prompt = `${ansi.getFgAnsi(200, 200, 200)}>${ansi.reset}`;
           
           // Content area: 3 chars for prompt prefix (" > " / "   ")
