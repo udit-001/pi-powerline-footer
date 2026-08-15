@@ -484,12 +484,19 @@ export default function powerlineFooter(pi: ExtensionAPI) {
         };
 
         return {
-          render: (width: number) => [
-            theme.fg("accent", "Pick a theme"),
-            theme.fg("muted", "─".repeat(Math.max(0, width))),
-            ...list.render(width),
-            theme.fg("muted", "─".repeat(Math.max(0, width))),
-          ],
+          render: (width: number) => {
+            const W = Math.max(30, width);
+            const pad = (s: string, w: number) => s + " ".repeat(Math.max(0, w - visibleWidth(s)));
+            const rows = list.render(W - 4);
+            const lines: string[] = [
+              "┌" + "─".repeat(W - 2) + "┐",
+              "│ " + pad(theme.fg("accent", "Pick a theme"), W - 4) + " │",
+              "│ " + "─".repeat(W - 4) + " │",
+            ];
+            for (const r of rows) lines.push("│ " + pad(r, W - 4) + " │");
+            lines.push("└" + "─".repeat(W - 2) + "┘");
+            return lines;
+          },
           invalidate: () => list.invalidate(),
           handleInput: (data: string) => {
             list.handleInput(data);
@@ -499,7 +506,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
       },
       {
         overlay: true,
-        overlayOptions: { anchor: "top-right", width: "50%", maxHeight: "50%" },
+        overlayOptions: { anchor: "top-right", width: "44%", margin: 1 },
       }
     );
   }
