@@ -10,7 +10,7 @@ import { getSeparator } from "./separators.js";
 import { renderSegment } from "./segments.js";
 import { getGitStatus, invalidateGitStatus, invalidateGitBranch } from "./git-status.js";
 import { ansi, SEP } from "./colors.js";
-import { getDefaultColors } from "./theme.js";
+import { THEMES, THEME_LABELS, DEFAULT_THEME, type ThemeName } from "./themes.js";
 import { fetchCodexUsageSummary, fetchZaiUsageSummary } from "./usage-monitor.js";
 import { TokenRateTracker } from "./token-rate-monitor.js";
 
@@ -30,12 +30,14 @@ function getProviderFromModelId(modelId: string | undefined): UsageProvider {
 
 interface PowerlineConfig {
   preset: StatusLinePreset;
+  theme: ThemeName;
   disabledSegments: StatusLineSegmentId[];
   customSegments?: StatusLineSegmentId[];
 }
 
 let config: PowerlineConfig = {
   preset: "default",
+  theme: DEFAULT_THEME,
   disabledSegments: [],
 };
 
@@ -109,6 +111,10 @@ function readPersistedPowerline(): Partial<PowerlineConfig> | null {
     if (typeof presetVal === "string" && (Object.keys(PRESETS) as string[]).includes(presetVal)) {
       out.preset = presetVal as StatusLinePreset;
     }
+    const themeVal = pw.theme;
+    if (typeof themeVal === "string" && themeVal in THEMES) {
+      out.theme = themeVal as ThemeName;
+    }
     if (Array.isArray(pw.disabledSegments)) {
       out.disabledSegments = pw.disabledSegments.filter(
         (s): s is StatusLineSegmentId => typeof s === "string" && ALL_SEGMENTS.includes(s as StatusLineSegmentId)
@@ -141,6 +147,7 @@ function persistPowerlineConfig(): boolean {
   }
   settings.powerline = {
     preset: config.preset,
+    theme: config.theme,
     disabledSegments: config.disabledSegments,
     customSegments: config.customSegments,
   };
@@ -433,6 +440,22 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     ctx.ui.notify(`Preset: ${name}`, "info");
   }
 
+  // Pick a color theme.
+  async function pickTheme(ctx: any) {
+    const names = Object.keys(THEMES) as ThemeName[];
+    const items = names.map((n) => THEME_LABELS[n]);
+    const choice = await ctx.ui.select("Pick a theme", items);
+    if (!choice) return;
+    const idx = items.indexOf(choice);
+    const name = names[idx];
+    if (!name) return;
+    config.theme = name;
+    lastLayoutResult = null;
+    if (enabled) setupCustomEditor(ctx);
+    persistPowerlineConfig();
+    ctx.ui.notify(`Theme: ${THEME_LABELS[name]}`, "info");
+  }
+
   // Toggle individual segments. Saves to blacklist or custom list, then persists.
   async function editSegments(ctx: any) {
     const selected = new Set<StatusLineSegmentId>(getEffectiveSegments());
@@ -493,12 +516,14 @@ export default function powerlineFooter(pi: ExtensionAPI) {
 
       const choice = await ctx.ui.select("Powerline", [
         "Pick a preset",
+        "Pick a theme",
         "Edit segments",
         "Turn off",
       ]);
       if (!choice) return;
 
       if (choice === "Pick a preset") await pickPreset(ctx);
+      else if (choice === "Pick a theme") await pickTheme(ctx);
       else if (choice === "Edit segments") await editSegments(ctx);
       else if (choice === "Turn off") disablePowerline(ctx);
     },
@@ -506,7 +531,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
 
   function buildSegmentContext(ctx: any, width: number, theme: Theme): SegmentContext {
     const presetDef = getPreset(config.preset);
-    const colors: ColorScheme = presetDef.colors ?? getDefaultColors();
+    const colors: ColorScheme = THEMES[config.theme];
 
     // Build usage stats and get thinking level from session
     let input = 0, output = 0, cacheRead = 0, cacheWrite = 0;
