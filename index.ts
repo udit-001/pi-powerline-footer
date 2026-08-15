@@ -10,7 +10,6 @@ import { getSeparator } from "./separators.js";
 import { renderSegment } from "./segments.js";
 import { getGitStatus, invalidateGitStatus, invalidateGitBranch } from "./git-status.js";
 import { ansi, getFgAnsiCode } from "./colors.js";
-import { WelcomeHeader, discoverLoadedCounts, getRecentSessions } from "./welcome.js";
 import { getDefaultColors } from "./theme.js";
 import { fetchCodexUsageSummary, fetchZaiUsageSummary } from "./usage-monitor.js";
 import { TokenRateTracker } from "./token-rate-monitor.js";
@@ -88,21 +87,6 @@ function getEffectiveSegments(): StatusLineSegmentId[] {
   const def = getPreset(config.preset);
   const base = [...def.leftSegments, ...def.rightSegments, ...(def.secondarySegments ?? [])];
   return base.filter((s) => !config.disabledSegments.includes(s));
-}
-
-// Check if quietStartup is enabled in settings
-function isQuietStartup(): boolean {
-  const homeDir = process.env.HOME || process.env.USERPROFILE || "";
-  const settingsPath = join(homeDir, ".pi", "agent", "settings.json");
-  
-  try {
-    if (existsSync(settingsPath)) {
-      const settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
-      return settings.quietStartup === true;
-    }
-  } catch {}
-  
-  return false;
 }
 
 // ─── Persistence (settings.json → powerline key) ────────────────────────────
@@ -274,7 +258,6 @@ export default function powerlineFooter(pi: ExtensionAPI) {
   let getThinkingLevelFn: (() => string) | null = null;
   let isStreaming = false;
   let tuiRef: any = null; // Store TUI reference for forcing re-renders
-  let welcomeHeaderActive = false; // Track if welcome header should be cleared on first input
   
   // Cache for responsive layout (shared between editor and widget for consistency)
   let lastLayoutWidth = 0;
@@ -363,9 +346,6 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     
     if (enabled && ctx.hasUI) {
       setupCustomEditor(ctx);
-      if (isQuietStartup()) {
-        setupWelcomeHeader(ctx);
-      }
     }
   });
 
@@ -412,32 +392,12 @@ export default function powerlineFooter(pi: ExtensionAPI) {
   });
 
   // Track streaming state (footer only shows status during streaming)
-  // Also dismiss welcome when agent starts responding (handles `p "command"` case)
-  pi.on("agent_start", async (_event, ctx) => {
+  pi.on("agent_start", async (_event, _ctx) => {
     isStreaming = true;
-    dismissWelcome(ctx);
   });
-
-  // Also dismiss on tool calls (agent is working)
-  pi.on("tool_call", async (_event, ctx) => {
-    dismissWelcome(ctx);
-  });
-
-  // Helper to dismiss welcome header
-  function dismissWelcome(ctx: any) {
-    if (welcomeHeaderActive) {
-      welcomeHeaderActive = false;
-      ctx.ui.setHeader(undefined);
-    }
-  }
 
   pi.on("agent_end", async (_event, _ctx) => {
     isStreaming = false;
-  });
-
-  // Dismiss welcome overlay/header on first user input
-  pi.on("input", async (_event, ctx) => {
-    dismissWelcome(ctx);
   });
 
   // Disable the footer and restore pi defaults.
@@ -674,8 +634,6 @@ export default function powerlineFooter(pi: ExtensionAPI) {
             currentEditor?.handleInput(data);
             return;
           }
-          // Dismiss welcome overlay/header (use setTimeout to avoid re-entrancy)
-          setTimeout(() => dismissWelcome(ctx), 0);
           originalHandleInput(data);
         };
         
@@ -825,27 +783,6 @@ export default function powerlineFooter(pi: ExtensionAPI) {
           },
         };
       }, { placement: "aboveEditor" });
-    });
-  }
-
-  function setupWelcomeHeader(ctx: any) {
-    const modelName = ctx.model?.name || ctx.model?.id || "No model";
-    const providerName = ctx.model?.provider || "Unknown";
-    const loadedCounts = discoverLoadedCounts();
-    const recentSessions = getRecentSessions(3);
-    
-    const header = new WelcomeHeader(modelName, providerName, recentSessions, loadedCounts);
-    welcomeHeaderActive = true; // Will be cleared on first user input
-    
-    ctx.ui.setHeader((_tui: any, _theme: any) => {
-      return {
-        render(width: number): string[] {
-          return header.render(width);
-        },
-        invalidate() {
-          header.invalidate();
-        },
-      };
     });
   }
 
