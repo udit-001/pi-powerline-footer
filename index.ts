@@ -520,23 +520,46 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     ctx.ui.notify("Powerline off", "info");
   }
 
-  // Pick a preset (a named template). Shows each preset's segments first.
+  // Pick a preset (a named template) with live preview.
   async function pickPreset(ctx: any) {
-    const items = Object.entries(PRESETS).map(([name, def]) => {
-      const segs = [...def.leftSegments, ...def.rightSegments, ...(def.secondarySegments ?? [])].map((s) => SEGMENT_LABELS[s]).join(" · ");
-      return `${name}  →  ${segs}`;
+    const prevPreset = config.preset;
+    const prevCustom = config.customSegments;
+    const prevDisabled = config.disabledSegments;
+
+    const names = Object.keys(PRESETS) as StatusLinePreset[];
+    const items = names.map((n) => {
+      const def = PRESETS[n];
+      const hint = [...def.leftSegments, ...def.rightSegments, ...(def.secondarySegments ?? [])]
+        .map((s) => SEGMENT_LABELS[s])
+        .join(" · ");
+      return { value: n, label: n, hint };
     });
-    const choice = await ctx.ui.select("Pick a preset", items);
-    if (!choice) return;
-    const name = (choice.split("  →  ")[0] ?? "").trim() as StatusLinePreset;
-    if (!(name in PRESETS)) return;
-    config.preset = name;
-    config.customSegments = undefined;
-    config.disabledSegments = [];
-    lastLayoutResult = null;
-    if (enabled) setupCustomEditor(ctx);
-    persistPowerlineConfig();
-    ctx.ui.notify(`Preset: ${name}`, "info");
+
+    await pickInOverlay(ctx, {
+      title: "Pick a preset",
+      items,
+      initialIndex: names.indexOf(prevPreset),
+      onPreview: (v) => {
+        config.preset = v as StatusLinePreset;
+        config.customSegments = undefined;
+        config.disabledSegments = [];
+        lastLayoutResult = null;
+      },
+      onConfirm: (v) => {
+        config.preset = v as StatusLinePreset;
+        config.customSegments = undefined;
+        config.disabledSegments = [];
+        lastLayoutResult = null;
+        persistPowerlineConfig();
+        ctx.ui.notify(`Preset: ${v}`, "info");
+      },
+      onCancel: () => {
+        config.preset = prevPreset;
+        config.customSegments = prevCustom;
+        config.disabledSegments = prevDisabled;
+        lastLayoutResult = null;
+      },
+    });
   }
 
   // Pick a color theme with live preview.
