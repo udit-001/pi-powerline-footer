@@ -31,11 +31,28 @@ function getProviderFromModelId(modelId: string | undefined): UsageProvider {
 
 interface PowerlineConfig {
   preset: StatusLinePreset;
+  customSegments?: StatusLineSegmentId[];
 }
 
 let config: PowerlineConfig = {
   preset: "default",
 };
+
+// Canonical order of every selectable segment.
+const ALL_SEGMENTS: StatusLineSegmentId[] = [
+  "pi", "model", "thinking", "path", "git", "subagents", "extension_statuses",
+  "context_pct", "context_total", "token_in", "token_out", "token_total",
+  "cache_read", "cache_write", "usage_status", "token_rate", "tps_live",
+  "time_spent", "time", "session", "hostname",
+];
+
+// Single source of truth: the ordered list to render.
+// A custom edit overrides the current preset's list.
+function getEffectiveSegments(): StatusLineSegmentId[] {
+  if (config.customSegments) return config.customSegments;
+  const def = getPreset(config.preset);
+  return [...def.leftSegments, ...def.rightSegments, ...(def.secondarySegments ?? [])];
+}
 
 // Check if quietStartup is enabled in settings
 function isQuietStartup(): boolean {
@@ -93,14 +110,12 @@ function computeResponsiveLayout(
   const separatorDef = getSeparator(presetDef.separator);
   const sepWidth = visibleWidth(separatorDef.left) + 2; // separator + spaces around it
   
-  // Get all segments: primary first, then secondary
-  const primaryIds = [...presetDef.leftSegments, ...presetDef.rightSegments];
-  const secondaryIds = presetDef.secondarySegments ?? [];
-  const allSegmentIds = [...primaryIds, ...secondaryIds];
+  // The full ordered list; the layout auto-splits top bar vs second row by width.
+  const segmentIds = getEffectiveSegments();
   
   // Render all segments and get their widths
   const renderedSegments: { id: StatusLineSegmentId; content: string; width: number }[] = [];
-  for (const segId of allSegmentIds) {
+  for (const segId of segmentIds) {
     const { content, width, visible } = renderSegmentWithWidth(segId, ctx);
     if (visible) {
       renderedSegments.push({ id: segId, content, width });
@@ -319,51 +334,80 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     dismissWelcome(ctx);
   });
 
-  // Command to toggle/configure
+  // Disable the footer and restore pi defaults.
+  function disablePowerline(ctx: any) {
+    enabled = false;
+    ctx.ui.setEditorComponent(undefined);
+    ctx.ui.setFooter(undefined);
+    ctx.ui.setHeader(undefined);
+    ctx.ui.setWidget("powerline-secondary", undefined);
+    ctx.ui.setWidget("powerline-status", undefined);
+    footerDataRef = null;
+    tuiRef = null;
+    lastLayoutResult = null;
+    ctx.ui.notify("Powerline off", "info");
+  }
+
+  // Pick a preset (a named template). Shows each preset's segments first.
+  async function pickPreset(ctx: any) {
+    const items = Object.entries(PRESETS).map(([name, def]) => {
+      const segs = [...def.leftSegments, ...def.rightSegments, ...(def.secondarySegments ?? [])].join(" · ");
+      return `${name}  →  ${segs}`;
+    });
+    const choice = await ctx.ui.select("Pick a preset", items);
+    if (!choice) return;
+    const name = (choice.split("  →  ")[0] ?? "").trim() as StatusLinePreset;
+    if (!(name in PRESETS)) return;
+    config.preset = name;
+    config.customSegments = undefined;
+    lastLayoutResult = null;
+    if (enabled) setupCustomEditor(ctx);
+    ctx.ui.notify(`Preset: ${name}`, "info");
+  }
+
+  // Toggle individual segments. Saves to the custom ordered list.
+  async function editSegments(ctx: any) {
+    const selected = new Set<StatusLineSegmentId>(getEffectiveSegments());
+    while (true) {
+      const items = ALL_SEGMENTS.map((s) => `${selected.has(s) ? "✓" : "✗"} ${s}`);
+      items.push("Done — save and apply");
+      const choice = await ctx.ui.select("Toggle segments", items);
+      if (!choice || choice.startsWith("Done")) break;
+      const seg = (choice.split(" ")[1] ?? "") as StatusLineSegmentId;
+      if (!ALL_SEGMENTS.includes(seg)) continue;
+      if (selected.has(seg)) selected.delete(seg); else selected.add(seg);
+    }
+    const ordered = ALL_SEGMENTS.filter((s) => selected.has(s));
+    if (ordered.length === 0) {
+      ctx.ui.notify("No segments selected — footer unchanged", "error");
+      return;
+    }
+    config.customSegments = ordered;
+    lastLayoutResult = null;
+    if (enabled) setupCustomEditor(ctx);
+    ctx.ui.notify(`Footer updated (${ordered.length} segments)`, "info");
+  }
+
   pi.registerCommand("powerline", {
-    description: "Configure powerline status (toggle, preset)",
+    description: "Configure powerline status bar",
     handler: async (args, ctx) => {
-      // Update context reference (command ctx may have more methods)
       currentCtx = ctx;
-      
-      if (!args) {
-        // Toggle
-        enabled = !enabled;
-        if (enabled) {
-          setupCustomEditor(ctx);
-          ctx.ui.notify("Powerline enabled", "info");
-        } else {
-          // Clear all custom UI components
-          ctx.ui.setEditorComponent(undefined);
-          ctx.ui.setFooter(undefined);
-          ctx.ui.setHeader(undefined);
-          ctx.ui.setWidget("powerline-secondary", undefined);
-          ctx.ui.setWidget("powerline-status", undefined);
-          footerDataRef = null;
-          tuiRef = null;
-          // Clear layout cache
-          lastLayoutResult = null;
-          ctx.ui.notify("Defaults restored", "info");
-        }
+
+      if (args && args.trim().toLowerCase() === "off") {
+        disablePowerline(ctx);
         return;
       }
 
-      // Check if args is a preset name
-      const preset = args.trim().toLowerCase() as StatusLinePreset;
-      if (preset in PRESETS) {
-        config.preset = preset;
-        // Invalidate layout cache since preset changed
-        lastLayoutResult = null;
-        if (enabled) {
-          setupCustomEditor(ctx);
-        }
-        ctx.ui.notify(`Preset set to: ${preset}`, "info");
-        return;
-      }
+      const choice = await ctx.ui.select("Powerline", [
+        "Pick a preset",
+        "Edit segments",
+        "Turn off",
+      ]);
+      if (!choice) return;
 
-      // Show available presets
-      const presetList = Object.keys(PRESETS).join(", ");
-      ctx.ui.notify(`Available presets: ${presetList}`, "info");
+      if (choice === "Pick a preset") await pickPreset(ctx);
+      else if (choice === "Edit segments") await editSegments(ctx);
+      else if (choice === "Turn off") disablePowerline(ctx);
     },
   });
 
