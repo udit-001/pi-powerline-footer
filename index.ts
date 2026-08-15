@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ReadonlyFooterDataProvider, Theme } from "@earendil-works/pi-coding-agent";
-import { getSelectListTheme } from "@earendil-works/pi-coding-agent";
+import { DynamicBorder } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { visibleWidth, SelectList, type SelectItem } from "@earendil-works/pi-tui";
+import { visibleWidth, Container, Text, Spacer, getKeybindings } from "@earendil-works/pi-tui";
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 
@@ -159,6 +159,104 @@ function persistPowerlineConfig(): boolean {
   } catch {
     return false;
   }
+}
+
+// A bordered selection panel — same structure as pi's native selectors.
+class PickerComponent extends Container {
+  private selected = 0;
+  private items: { value: string; label: string; hint: string }[];
+  private theme: Theme;
+  private listContainer = new Container();
+  private onPreview: (value: string) => void;
+  private onConfirm: (value: string) => void;
+  private onCancel: () => void;
+
+  constructor(
+    theme: Theme,
+    title: string,
+    items: { value: string; label: string; hint: string }[],
+    initialIndex: number,
+    onPreview: (value: string) => void,
+    onConfirm: (value: string) => void,
+    onCancel: () => void,
+  ) {
+    super();
+    this.theme = theme;
+    this.items = items;
+    this.selected = Math.max(0, Math.min(initialIndex, items.length - 1));
+    this.onPreview = onPreview;
+    this.onConfirm = onConfirm;
+    this.onCancel = onCancel;
+
+    this.addChild(new DynamicBorder());
+    this.addChild(new Spacer(1));
+    this.addChild(new Text(theme.fg("accent", title), 1, 0));
+    this.addChild(new Spacer(1));
+    this.addChild(this.listContainer);
+    this.addChild(new Spacer(1));
+    this.addChild(new Text(theme.fg("muted", "↑↓ navigate  ·  enter select  ·  esc cancel"), 1, 0));
+    this.addChild(new Spacer(1));
+    this.addChild(new DynamicBorder());
+    this.updateList();
+  }
+
+  private updateList() {
+    this.listContainer.clear();
+    this.items.forEach((it, i) => {
+      const isSel = i === this.selected;
+      const label = isSel
+        ? this.theme.fg("accent", "→ " + it.label)
+        : "  " + this.theme.fg("text", it.label);
+      const hint = it.hint ? this.theme.fg("muted", "   " + it.hint) : "";
+      this.listContainer.addChild(new Text(label + hint, 1, 0));
+    });
+  }
+
+  handleInput(keyData: string) {
+    const kb = getKeybindings();
+    if (kb.matches(keyData, "tui.select.up") || keyData === "k") {
+      this.selected = this.selected === 0 ? this.items.length - 1 : this.selected - 1;
+      this.updateList();
+      this.onPreview(this.items[this.selected].value);
+    } else if (kb.matches(keyData, "tui.select.down") || keyData === "j") {
+      this.selected = this.selected === this.items.length - 1 ? 0 : this.selected + 1;
+      this.updateList();
+      this.onPreview(this.items[this.selected].value);
+    } else if (kb.matches(keyData, "tui.select.confirm") || keyData === "\n") {
+      const it = this.items[this.selected];
+      if (it) this.onConfirm(it.value);
+    } else if (kb.matches(keyData, "tui.select.cancel")) {
+      this.onCancel();
+    }
+  }
+}
+
+async function pickInOverlay(
+  ctx: any,
+  opts: {
+    title: string;
+    items: { value: string; label: string; hint: string }[];
+    initialIndex: number;
+    onPreview: (value: string) => void;
+    onConfirm: (value: string) => void;
+    onCancel: () => void;
+  },
+): Promise<void> {
+  await ctx.ui.custom<void>(
+    (tui, theme: Theme, _keybindings: any, done: any) => {
+      const comp = new PickerComponent(
+        theme,
+        opts.title,
+        opts.items,
+        opts.initialIndex,
+        (v) => { opts.onPreview(v); tui.requestRender(); },
+        (v) => { opts.onConfirm(v); tui.requestRender(); done(); },
+        () => { opts.onCancel(); tui.requestRender(); done(); },
+      );
+      return comp;
+    },
+    { overlay: true, overlayOptions: { anchor: "top-right", width: "44%", margin: 1 } },
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -441,74 +539,35 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     ctx.ui.notify(`Preset: ${name}`, "info");
   }
 
-  // Pick a color theme with live preview (floating overlay; status line stays visible).
+  // Pick a color theme with live preview.
   async function pickTheme(ctx: any) {
     const previous = config.theme;
     const names = Object.keys(THEMES) as ThemeName[];
-    const items: SelectItem[] = names.map((n) => ({
+    const items = names.map((n) => ({
       value: n,
       label: THEME_LABELS[n],
-      description: THEME_HINTS[n],
+      hint: THEME_HINTS[n],
     }));
 
-    await ctx.ui.custom<void>(
-      (tui, theme: Theme, _keybindings, done: any) => {
-        const list = new SelectList(
-          items,
-          Math.min(items.length, 10),
-          getSelectListTheme()
-        );
-
-        // Start the highlight on the current theme.
-        list.setSelectedIndex(Math.max(0, names.indexOf(previous)));
-
-        list.onSelectionChange = (item) => {
-          config.theme = item.value as ThemeName;
-          lastLayoutResult = null;
-        };
-
-        list.onSelect = (item) => {
-          config.theme = item.value as ThemeName;
-          lastLayoutResult = null;
-          persistPowerlineConfig();
-          ctx.ui.notify(`Theme: ${THEME_LABELS[item.value as ThemeName]}`, "info");
-          tui.requestRender();
-          done();
-        };
-
-        list.onCancel = () => {
-          config.theme = previous;
-          lastLayoutResult = null;
-          tui.requestRender();
-          done();
-        };
-
-        return {
-          render: (width: number) => {
-            const W = Math.max(30, width);
-            const pad = (s: string, w: number) => s + " ".repeat(Math.max(0, w - visibleWidth(s)));
-            const rows = list.render(W - 4);
-            const lines: string[] = [
-              "┌" + "─".repeat(W - 2) + "┐",
-              "│ " + pad(theme.fg("accent", "Pick a theme"), W - 4) + " │",
-              "│ " + "─".repeat(W - 4) + " │",
-            ];
-            for (const r of rows) lines.push("│ " + pad(r, W - 4) + " │");
-            lines.push("└" + "─".repeat(W - 2) + "┘");
-            return lines;
-          },
-          invalidate: () => list.invalidate(),
-          handleInput: (data: string) => {
-            list.handleInput(data);
-            tui.requestRender();
-          },
-        };
+    await pickInOverlay(ctx, {
+      title: "Pick a theme",
+      items,
+      initialIndex: names.indexOf(previous),
+      onPreview: (v) => {
+        config.theme = v as ThemeName;
+        lastLayoutResult = null;
       },
-      {
-        overlay: true,
-        overlayOptions: { anchor: "top-right", width: "44%", margin: 1 },
-      }
-    );
+      onConfirm: (v) => {
+        config.theme = v as ThemeName;
+        lastLayoutResult = null;
+        persistPowerlineConfig();
+        ctx.ui.notify(`Theme: ${THEME_LABELS[v as ThemeName]}`, "info");
+      },
+      onCancel: () => {
+        config.theme = previous;
+        lastLayoutResult = null;
+      },
+    });
   }
 
   // Toggle individual segments. Saves to blacklist or custom list, then persists.
