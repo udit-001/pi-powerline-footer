@@ -125,3 +125,12 @@ export const THEME_LABELS: Record<ThemeName, string> = {
   gruvbox: "Gruvbox",
   solarized: "Solarized",
 };
+
+export const THEME_HINTS: Record<ThemeName, string> = {
+  zen: "monochrome · color only for alerts",
+  catppuccin: "mauve · blue · peach",
+  "tokyo-night": "cyan · blue · orange",
+  nord: "frost · blue",
+  gruvbox: "purple · aqua · orange",
+  solarized: "magenta · cyan · orange",
+};

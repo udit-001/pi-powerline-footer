@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ReadonlyFooterDataProvider, Theme } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { visibleWidth, SelectList, type SelectItem } from "@earendil-works/pi-tui";
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 
@@ -10,7 +10,7 @@ import { getSeparator } from "./separators.js";
 import { renderSegment } from "./segments.js";
 import { getGitStatus, invalidateGitStatus, invalidateGitBranch } from "./git-status.js";
 import { ansi, SEP } from "./colors.js";
-import { THEMES, THEME_LABELS, DEFAULT_THEME, type ThemeName } from "./themes.js";
+import { THEMES, THEME_LABELS, THEME_HINTS, DEFAULT_THEME, type ThemeName } from "./themes.js";
 import { fetchCodexUsageSummary, fetchZaiUsageSummary } from "./usage-monitor.js";
 import { TokenRateTracker } from "./token-rate-monitor.js";
 
@@ -440,20 +440,57 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     ctx.ui.notify(`Preset: ${name}`, "info");
   }
 
-  // Pick a color theme.
+  // Pick a color theme with live preview (overlay that leaves the status line visible).
   async function pickTheme(ctx: any) {
+    const previous = config.theme;
     const names = Object.keys(THEMES) as ThemeName[];
-    const items = names.map((n) => THEME_LABELS[n]);
-    const choice = await ctx.ui.select("Pick a theme", items);
-    if (!choice) return;
-    const idx = items.indexOf(choice);
-    const name = names[idx];
-    if (!name) return;
-    config.theme = name;
-    lastLayoutResult = null;
-    if (enabled) setupCustomEditor(ctx);
-    persistPowerlineConfig();
-    ctx.ui.notify(`Theme: ${THEME_LABELS[name]}`, "info");
+    const items: SelectItem[] = names.map((n) => ({
+      value: n,
+      label: THEME_LABELS[n],
+      description: THEME_HINTS[n],
+    }));
+
+    await ctx.ui.custom<void>(
+      (_tui: any, theme: Theme, _keybindings: any, done: any) => {
+        const list = new SelectList(items, 6, {
+          selectedPrefix: (s: string) => s,
+          selectedText: (s: string) => theme.fg("accent", s),
+          description: (s: string) => theme.fg("muted", s),
+          scrollInfo: (s: string) => theme.fg("muted", s),
+          noMatch: (s: string) => s,
+        });
+
+        // Start the highlight on the current theme.
+        list.setSelectedIndex(Math.max(0, names.indexOf(previous)));
+
+        list.onSelectionChange = (item) => {
+          config.theme = item.value as ThemeName;
+          lastLayoutResult = null;
+          tuiRef?.requestRender();
+        };
+
+        list.onSelect = (item) => {
+          config.theme = item.value as ThemeName;
+          lastLayoutResult = null;
+          persistPowerlineConfig();
+          ctx.ui.notify(`Theme: ${THEME_LABELS[item.value as ThemeName]}`, "info");
+          done();
+        };
+
+        list.onCancel = () => {
+          config.theme = previous;
+          lastLayoutResult = null;
+          tuiRef?.requestRender();
+          done();
+        };
+
+        return list;
+      },
+      {
+        overlay: true,
+        overlayOptions: { anchor: "top-right", width: "50%", maxHeight: "50%" },
+      }
+    );
   }
 
   // Toggle individual segments. Saves to blacklist or custom list, then persists.
