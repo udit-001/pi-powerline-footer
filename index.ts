@@ -761,7 +761,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
             done();
           },
         ),
-      { overlay: true, overlayOptions: { anchor: "center", width: "60%", margin: 1 } },
+      { overlay: true, overlayOptions: { anchor: "top-right", width: "60%", margin: 1 } },
     );
   }
 
