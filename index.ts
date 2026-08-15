@@ -231,6 +231,107 @@ class PickerComponent extends Container {
   }
 }
 
+// A checkbox-style panel for toggling segments on/off with live preview.
+// Operates on the caller's Set by reference so the footer re-render reads
+// the same state. Enforces "at least one segment on".
+class SegmentsPickerComponent extends Container {
+  private theme: Theme;
+  private listContainer = new Container();
+  private selected: Set<StatusLineSegmentId>;
+  private segIds: StatusLineSegmentId[] = [];
+  private cursor = 0; // index into segIds (segment rows only, headers skipped)
+  private requestRender: () => void;
+  private onToggle: (id: StatusLineSegmentId, nowOn: boolean) => void;
+  private onDone: () => void;
+  private onCancel: () => void;
+
+  constructor(
+    theme: Theme,
+    title: string,
+    selected: Set<StatusLineSegmentId>,
+    requestRender: () => void,
+    onToggle: (id: StatusLineSegmentId, nowOn: boolean) => void,
+    onDone: () => void,
+    onCancel: () => void,
+  ) {
+    super();
+    this.theme = theme;
+    this.selected = selected;
+    this.requestRender = requestRender;
+    this.onToggle = onToggle;
+    this.onDone = onDone;
+    this.onCancel = onCancel;
+
+    for (const group of SEGMENT_GROUPS) {
+      for (const id of group.ids) this.segIds.push(id);
+    }
+
+    this.addChild(new DynamicBorder());
+    this.addChild(new Spacer(1));
+    this.addChild(new Text(theme.fg("accent", title), 1, 0));
+    this.addChild(new Spacer(1));
+    this.addChild(this.listContainer);
+    this.addChild(new Spacer(1));
+    this.addChild(new Text(theme.fg("muted", "↑↓ navigate  ·  space toggle  ·  enter done  ·  esc cancel"), 1, 0));
+    this.addChild(new Spacer(1));
+    this.addChild(new DynamicBorder());
+    this.updateList();
+  }
+
+  private updateList() {
+    this.listContainer.clear();
+    let segPos = 0;
+    for (const group of SEGMENT_GROUPS) {
+      this.listContainer.addChild(new Text(this.theme.fg("muted", "── " + group.title + " ──"), 1, 0));
+      for (const id of group.ids) {
+        const isCur = segPos === this.cursor;
+        const on = this.selected.has(id);
+        const label = isCur
+          ? this.theme.fg("accent", SEGMENT_LABELS[id])
+          : this.theme.fg("text", SEGMENT_LABELS[id]);
+        const mark = on
+          ? this.theme.fg("accent", "[✓]")
+          : this.theme.fg("muted", "[ ]");
+        const prefix = isCur ? this.theme.fg("accent", "→ ") : "  ";
+        this.listContainer.addChild(new Text(prefix + label + "  " + mark, 1, 0));
+        segPos++;
+      }
+    }
+  }
+
+  handleInput(keyData: string) {
+    const kb = getKeybindings();
+    if (kb.matches(keyData, "tui.select.up") || keyData === "k") {
+      this.cursor = this.cursor === 0 ? this.segIds.length - 1 : this.cursor - 1;
+      this.updateList();
+      this.requestRender();
+    } else if (kb.matches(keyData, "tui.select.down") || keyData === "j") {
+      this.cursor = this.cursor === this.segIds.length - 1 ? 0 : this.cursor + 1;
+      this.updateList();
+      this.requestRender();
+    } else if (keyData === " ") {
+      const id = this.segIds[this.cursor];
+      if (!id) return;
+      const on = this.selected.has(id);
+      if (on) {
+        // Refuse to turn off the last remaining segment.
+        if (this.selected.size === 1) return;
+        this.selected.delete(id);
+        this.updateList();
+        this.onToggle(id, false);
+      } else {
+        this.selected.add(id);
+        this.updateList();
+        this.onToggle(id, true);
+      }
+    } else if (kb.matches(keyData, "tui.select.confirm") || keyData === "\n") {
+      this.onDone();
+    } else if (kb.matches(keyData, "tui.select.cancel")) {
+      this.onCancel();
+    }
+  }
+}
+
 async function pickInOverlay(
   ctx: any,
   opts: {
@@ -589,52 +690,58 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     });
   }
 
-  // Toggle individual segments. Saves to blacklist or custom list, then persists.
+  // Toggle individual segments with live preview. Saves to blacklist or custom list, then persists.
   async function editSegments(ctx: any) {
+    const prevCustom = config.customSegments;
+    const prevDisabled = config.disabledSegments;
+
     const selected = new Set<StatusLineSegmentId>(getEffectiveSegments());
-    while (true) {
-      const labels: string[] = [];
-      const ids: (StatusLineSegmentId | null)[] = [];
-      for (const group of SEGMENT_GROUPS) {
-        labels.push(`── ${group.title} ──`);
-        ids.push(null);
-        for (const s of group.ids) {
-          labels.push(`${selected.has(s) ? "✓" : "✗"} ${SEGMENT_LABELS[s]}`);
-          ids.push(s);
-        }
+
+    // Apply the working set to config (no persistence). Always has ≥ 1 segment.
+    const apply = () => {
+      const ordered = ALL_SEGMENTS.filter((s) => selected.has(s));
+      const def = getPreset(config.preset);
+      const presetList = [...def.leftSegments, ...def.rightSegments, ...(def.secondarySegments ?? [])];
+      const addedBeyondPreset = ordered.some((s) => !presetList.includes(s));
+      if (addedBeyondPreset) {
+        config.customSegments = ordered;
+        config.disabledSegments = [];
+      } else {
+        config.disabledSegments = presetList.filter((s) => !selected.has(s));
+        config.customSegments = undefined;
       }
-      labels.push("Done — save and apply");
-      ids.push(null);
+    };
 
-      const choice = await ctx.ui.select("Toggle segments", labels);
-      if (!choice || choice.startsWith("Done")) break;
-      const idx = labels.indexOf(choice);
-      const seg = ids[idx];
-      if (!seg) continue;
-      if (selected.has(seg)) selected.delete(seg); else selected.add(seg);
-    }
-
-    const ordered = ALL_SEGMENTS.filter((s) => selected.has(s));
-    if (ordered.length === 0) {
-      ctx.ui.notify("No segments selected — footer unchanged", "error");
-      return;
-    }
-
-    const def = getPreset(config.preset);
-    const presetList = [...def.leftSegments, ...def.rightSegments, ...(def.secondarySegments ?? [])];
-    const addedBeyondPreset = ordered.some((s) => !presetList.includes(s));
-    if (addedBeyondPreset) {
-      config.customSegments = ordered;
-      config.disabledSegments = [];
-    } else {
-      config.disabledSegments = presetList.filter((s) => !selected.has(s));
-      config.customSegments = undefined;
-    }
-
-    lastLayoutResult = null;
-    if (enabled) setupCustomEditor(ctx);
-    persistPowerlineConfig();
-    ctx.ui.notify(`Footer updated (${ordered.length} segments)`, "info");
+    await ctx.ui.custom<void>(
+      (tui, theme: Theme, _kb, done: any) =>
+        new SegmentsPickerComponent(
+          theme,
+          "Edit segments",
+          selected,
+          () => tui.requestRender(),
+          (_id, _nowOn) => {
+            apply();
+            lastLayoutResult = null;
+            tui.requestRender();
+          },
+          () => {
+            apply();
+            lastLayoutResult = null;
+            persistPowerlineConfig();
+            ctx.ui.notify(`Footer updated (${selected.size} segments)`, "info");
+            tui.requestRender();
+            done();
+          },
+          () => {
+            config.customSegments = prevCustom;
+            config.disabledSegments = prevDisabled;
+            lastLayoutResult = null;
+            tui.requestRender();
+            done();
+          },
+        ),
+      { overlay: true, overlayOptions: { anchor: "center", width: "44%", margin: 1 } },
+    );
   }
 
   pi.registerCommand("powerline", {
